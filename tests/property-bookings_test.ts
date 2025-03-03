@@ -11,6 +11,7 @@ Clarinet.test({
     name: "Test date validation and booking",
     async fn(chain: Chain, accounts: Map<string, Account>) {
         const wallet1 = accounts.get('wallet_1')!;
+        const deployer = accounts.get('deployer')!;
         
         // Test invalid date range (check-out before check-in)
         let block = chain.mineBlock([
@@ -20,7 +21,7 @@ Clarinet.test({
             ], wallet1.address)
         ]);
         
-        block.receipts[0].result.expectErr().expectUint(101); // err-invalid-dates
+        block.receipts[0].result.expectErr().expectUint(101);
         
         // Test valid booking
         block = chain.mineBlock([
@@ -31,7 +32,24 @@ Clarinet.test({
         ]);
         
         block.receipts[0].result.expectOk().expectUint(1);
+
+        // Test configuration update
+        block = chain.mineBlock([
+            Tx.contractCall('property-bookings', 'update-nightly-rate', [
+                types.uint(150)
+            ], deployer.address)
+        ]);
+        
+        block.receipts[0].result.expectOk().expectBool(true);
+
+        // Test double booking prevention
+        block = chain.mineBlock([
+            Tx.contractCall('property-bookings', 'book-property', [
+                types.uint(12),
+                types.uint(15)
+            ], wallet1.address)
+        ]);
+        
+        block.receipts[0].result.expectErr().expectUint(102);
     },
 });
-
-// Additional tests remain the same...
