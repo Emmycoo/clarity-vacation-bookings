@@ -16,9 +16,20 @@
 ;; Data Variables
 (define-data-var min-stay uint u2)
 (define-data-var max-stay uint u14)
-(define-data-var nightly-rate uint u100) ;; In STX
-(define-data-var cancellation-fee-pct uint u20) ;; 20% fee
-(define-data-var min-deposit-pct uint u30) ;; 30% minimum deposit
+(define-data-var nightly-rate uint u100)
+(define-data-var cancellation-fee-pct uint u20)
+(define-data-var min-deposit-pct uint u30)
+
+;; Events
+(define-data-var last-event-id uint u0)
+(define-map events 
+    { event-id: uint }
+    {
+        event-type: (string-ascii 20),
+        booking-id: uint,
+        timestamp: uint
+    }
+)
 
 ;; Data Maps
 (define-map bookings
@@ -51,35 +62,74 @@
     )
 )
 
-(define-private (is-date-range-available (current-date uint) (end-date uint))
+(define-private (is-date-available (date uint))
+    (is-none (map-get? booking-dates { date: date }))
+)
+
+(define-private (is-date-range-available-iter (current-date uint) (end-date uint))
     (and
-        (is-date-available current-date end-date)
+        (is-date-available current-date)
         (if (>= current-date end-date)
             true
-            (is-date-range-available (+ current-date u1) end-date)
+            (is-date-range-available-iter (+ current-date u1) end-date)
         )
     )
 )
 
-(define-private (mark-dates-booked (current-date uint) (end-date uint) (booking-id uint))
+(define-private (is-date-range-available (check-in uint) (check-out uint))
+    (is-date-range-available-iter check-in (- check-out u1))
+)
+
+(define-private (mark-dates-booked-iter (current-date uint) (end-date uint) (booking-id uint))
     (begin
         (map-set booking-dates { date: current-date } { booking-id: booking-id })
         (if (>= current-date end-date)
             true
-            (mark-dates-booked (+ current-date u1) end-date booking-id)
+            (mark-dates-booked-iter (+ current-date u1) end-date booking-id)
         )
     )
 )
 
-(define-private (calculate-total-amount (nights uint))
-    (* nights (var-get nightly-rate))
+(define-private (mark-dates-booked (check-in uint) (check-out uint) (booking-id uint))
+    (mark-dates-booked-iter check-in (- check-out u1) booking-id)
 )
 
-(define-private (calculate-min-deposit (total-amount uint))
-    (/ (* total-amount (var-get min-deposit-pct)) u100)
+(define-private (emit-event (event-type (string-ascii 20)) (booking-id uint))
+    (let ((event-id (+ (var-get last-event-id) u1)))
+        (begin
+            (map-set events
+                { event-id: event-id }
+                {
+                    event-type: event-type,
+                    booking-id: booking-id,
+                    timestamp: block-height
+                }
+            )
+            (var-set last-event-id event-id)
+            event-id
+        )
+    )
 )
 
-;; Public Functions
+;; Public Getter Functions
+(define-read-only (get-booking (booking-id uint))
+    (map-get? bookings { booking-id: booking-id })
+)
+
+(define-read-only (get-date-booking (date uint))
+    (map-get? booking-dates { date: date })
+)
+
+;; Configuration Functions
+(define-public (update-nightly-rate (new-rate uint))
+    (begin
+        (asserts! (is-eq tx-sender contract-owner) err-owner-only)
+        (var-set nightly-rate new-rate)
+        (ok true)
+    )
+)
+
+;; Original booking function remains the same
 (define-public (book-property (check-in uint) (check-out uint))
     (let
         (
@@ -105,9 +155,7 @@
         
         (mark-dates-booked check-in check-out booking-id)
         (var-set booking-nonce booking-id)
+        (emit-event "booking-created" booking-id)
         (ok booking-id)
     )
 )
-
-;; Additional functions remain the same but updated to use new status constants
-;; and deposit tracking...
